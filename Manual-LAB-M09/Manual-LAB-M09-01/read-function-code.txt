@@ -1,0 +1,28 @@
+'use strict'; 
+
+
+import { DynamoDBClient, ScanCommand } from "@aws-sdk/client-dynamodb";
+// import AWS from 'aws-sdk';
+// const myDocumentClient = new AWS.DynamoDB.DocumentClient();
+const client = new DynamoDBClient();
+
+export const handler = async (event, context, callback) => { 
+    var params = { 
+   	   TableName : process.env.TABLE_NAME
+  	};
+  	try {
+  	    const command = new ScanCommand(params);
+  	    const response = await client.send(command);
+        return {
+            statusCode: 200,
+            body: response.Items
+        };
+	} catch (err) {
+        console.error('Error:', err);
+
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: err.message })
+        };
+    }
+};
