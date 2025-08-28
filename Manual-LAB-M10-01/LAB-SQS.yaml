@@ -1,0 +1,170 @@
+Description: 'Lab: Deploy VPC and EC2 Instances'
+
+Parameters:
+  LinuxAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 192.168.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: VPC-IGW
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 192.168.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: VPC-PublicSubnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: VPC-PublicRT
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  RootRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+
+  RootInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref RootRole
+
+  WebServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: WebServer-SG
+      GroupDescription: WebServer-SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: WebServer-SG
+
+  AppServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: AppServer-SG
+      GroupDescription: AppServer-SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: AppServer-SG
+
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LinuxAmiId
+      Tags:
+        - Key: Name
+          Value: WebServer
+      InstanceType: t3.micro
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebServerSG
+      IamInstanceProfile: !Ref RootInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            echo 'lab-password' | passwd ec2-user --stdin
+            sed -i 's|[#]*PasswordAuthentication no|PasswordAuthentication yes|g' /etc/ssh/sshd_config
+            sudo systemctl restart sshd.service
+            sudo hostnamectl set-hostname webserver
+
+  AppServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LinuxAmiId
+      Tags:
+        - Key: Name
+          Value: AppServer
+      InstanceType: t3.micro
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref AppServerSG
+      IamInstanceProfile: !Ref RootInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            echo 'lab-password' | passwd ec2-user --stdin
+            sed -i 's|[#]*PasswordAuthentication no|PasswordAuthentication yes|g' /etc/ssh/sshd_config
+            sudo systemctl restart sshd.service
+            sudo hostnamectl set-hostname appserver
+
+Outputs:
+  WebServerIP:
+    Value: !GetAtt [WebServerInstance, PublicIp]
+    Description: Web Server Public IP Address
+
+  AppServerIP:
+    Value: !GetAtt [AppServerInstance, PublicIp]
+    Description: App Server Public IP Address
